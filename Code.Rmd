@@ -1,0 +1,709 @@
+---
+title: "Treball Sèries Temporals"
+author: "Sergio Cárdenas & Armand de Asís"
+date: "25/4/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Preparació
+
+Començarem analitzant la sèrie temporal "cemento.dat". Veiem que són dades mensuals sobre el consum de ciment a Espanya des de 1990 fins a 2018. Apliquem una correcció sobre les dades perque mostrin milers de tones per així evitar que a l'hora d'analitzar la variància els valors siguin excesivament grans.
+
+```{r}
+serie=window(ts(read.table("cemento.dat"),start=1988,freq=12),start=1990)
+plot(serie,main="Consum aparent de ciment (milers de tones)")
+abline(v=1990:2018,col=4,lty=3)
+```
+
+***
+
+## Estadística descriptiva de la sèrie
+
+Fins als darrers anys del segle XX sembla haver un consum de ciment relativament semblant, que als anys propers al 2000 conmença a créixer fins al 2008, on decreix radicalmen. Al 2008, podem veure clarament l'efecte de la crisi amb una davallada del consum de ciment. Possiblement serà un outlier que haurem de considerar. Cap al 2013 sembla que el consum de ciment es queda constant i a valors molt petits, degut a que la construcció de nous habitatges es va reduir després de que esclatés la bombolla immobiliària.
+
+A més a més, podem veure que hi ha un cert comportament estacional, amb un creixement en el consum de ciment a les èpoques estivals, i no sembla haver variància constant al llarg de la sèrie.
+
+***
+
+## Estacionarietat de la sèrie
+
+### Estudi de l'homocedasticitat
+
+Farem ara les transformacions necessàries per aconseguir l'estacionarietat de la sèrie. 
+
+Fent un boxplot de la sèrie (on cada capsa representa un any amb 12 observacions pels 12 messos), es pot veure que les variàncies no són constants, ja que les "capses" que representen valors més alts són molt més amples que les dels valors petits, per tant, haurem d'aplicar una transformació Box-Cox, en aquest cas el logaritme.
+
+```{r}
+boxplot(matrix(serie, nrow=12)) 
+```
+
+Apliquem la transformació logarítmica per tal d'estabilitzar les variàncies i podem veure que ha funcionat:
+
+```{r}
+par(mfrow=c(1,2))
+lnserie <-log(serie)
+plot(lnserie)
+abline(v=1990:2019,col=4,lty=3)
+boxplot(matrix(lnserie, nrow=12)) 
+title("Consum aparent de ciment (milers de tones)", line=-1.3, outer=TRUE)
+```
+
+### Estudi de l'estacionalitat
+
+Com hem vist a l'estadística descriptiva, la sèrie sembla presentar un comportament estacional. Per tant, comprovem que és així:
+
+```{r}
+par(mfrow=c(1,2))
+monthplot(serie)
+ts.plot(matrix(serie,nrow=12))
+par(mfrow=c(1,1))
+```
+
+Podem veure que, tot i que no sembla molt evident a tots els casos, hi ha un patró estacional que es caracteritza per valors lleugerament més petits a l'hivern, probablement degut a que les condicions climàtiques dificulten el treball a l'aire lliure, de manera que és evident que amb el bon temps vingui l'augment en el consum de ciment, a excepció d'agost, més al qual s'aturen els treballs per vacances. Per tant, hem d'aplicar diferenciació estacional de període 12 amb l'objectiu de corregir aquest comportament:
+
+```{r}
+d12lnserie <- diff(lnserie, 12)
+plot(d12lnserie)
+abline(h=0)
+```
+
+### Estudi de la mitjana
+
+Després d'aplicar la diferenciació estacional a la nostra sèrie, veiem que la mitjana no és constant, com podem veure clarament a l'outlier del 2008 i els següents mesos, de manera que aplicarem també una diferenciació regular.
+
+```{r}
+d1d12lnserie <- diff(d12lnserie)
+plot(d1d12lnserie)
+abline(h=0)
+```
+
+Per tal d'assegurar que realment la mitjana és constant, apliquem una altra diferenciació regular.
+
+```{r}
+d1d1d12lnserie <- diff(d1d12lnserie)
+plot(d1d1d12lnserie)
+abline(h=0)
+```
+
+### Tria de la millor transformació
+
+Comparem les variàncies dels diferents tractaments de la sèrie per veure quina és la millor opció, que serà aquella amb menor variància.
+
+```{r}
+var(serie)
+var(lnserie)
+var(d12lnserie)
+var(d1d12lnserie)
+var(d1d1d12lnserie)
+```
+
+Veiem que el millor tractament per a la nostra sèrie és una diferenciació estacional i un regular, per tant, treballarem amb la sèrie "d1d12lnserie".
+
+$$(1-B)(1-B^{12})log(X_t)=Z_t$$
+
+***
+
+## Identificació de models
+
+Per poder identifcar els models, representem i analitzarem l'ACF i la PACF de la nostra sèrie transformada:
+
+```{r}
+par(mfrow=c(1,2))
+acf(d1d12lnserie,ylim=c(-1,1), lag.max = 72, col=c(2,rep(1,11)), lwd = 2) 
+pacf(d1d12lnserie,ylim=c(-1,1), lag.max = 72, col=c(rep(1,11), 2), lwd = 2)
+```
+
+Veient això, sembla ser que l'ACF no presenta un comportament decreixent en la part que estem observem, per tant, ampliem nombre de retards per veure si realmente decreix al llarg del temps.
+
+```{r}
+acf(d1d12lnserie,ylim=c(-1,1), lag.max = 324, col=c(2,rep(1,11)), lwd = 2) 
+```
+
+Efectivament, l'ACF presenta un patró de decreixement. Amb això i el que havíem vist al PACF podríem plantejar els següents models:
+
+- $Model~1 = ARIMA(4,1,0)(0,1,2)_{12}$
+
+- $Model~2 = ARIMA(1,1,1)(1,1,1)_{12}$
+
+En el primer model, com veiem que hi ha dos pics molts clars al PACF identifiquem un model AR a la part regular, a més del decreixement de l'ACF. Així, q = 0 i com veiem que el quart retard sembla significatiu, decidim agafar p = 4, ja que sempre és millor sobreparametritzar d'entrada i anar treient paràmetres durant l'estimació de models. Per la part estacional, veiem dos retards significatius a l'ACF, i el tercer ja no ho és, de manera que triem un model MA, on P = 0, amb Q = 2. Tot i això, després sembla haver més retards significatius, però amb l'estimació del model comprovarem si realment aquest model s'ajusta al comportament de la sèrie. D'altra banda, la sèrie presenta una diferenciació estacional i una regular, per tant, d = D = 1.
+
+Pel segon model, utilitzarem un model ARMA(1,1) tant per a la part regular com per a l'estacional, ja que podem observar patrons de decreixement prou clars als dos gràfics. Per tant, tot i que el model ARMA(1,1) presenta pitjors propietats, pot explicar bé la sèrie. Així que p = q = P = Q = 1, i com la sèrie presenta una diferenciació estacional i una regular, d = D = 1.
+
+***
+
+## Estimació dels models
+
+### Model 1
+
+Comencem fent un test ràtio dels coeficients del primer model per comprovar que són estadísticament significatius (prenem d = D = 0 perquè ja hem fet les diferenciacions de la sèrie prèviament).
+
+```{r}
+(model1=arima(d1d12lnserie,order=c(4,0,0),seasonal=list(order=c(0,0,2),period=12)))
+```
+
+Podem veure que, estadísticament, el terme independent val 0, i el seu test ràtio és menor que 2 en valor absolut, per tant, al nostre model no és important i no cal tenir-la en compte.
+
+```{r}
+(model1=arima(lnserie,order=c(4,1,0),seasonal=list(order=c(0,1,2),period=12)))
+```
+
+Veiem que l'AIC ha disminuit, de manera que aquest model explica millor la nostra sèrie i a més utilitza menys paràmetres. Fent el ràtio test dels altres paràmetres, veiem que el tercer de la part AR de la diferenciació regular té un valor menor que 2, de manera que provem a eliminar-lo.
+
+```{r}
+(model1=arima(lnserie,order=c(4,1,0),seasonal=list(order=c(0,1,2),period=12),fixed=c(NA,NA,0,NA,NA,NA)))
+```
+
+Veiem que efectivament l'AIC disminueix, i com que els altres test ràtio són bastant superiors a 2, ens quedarem amb aquesta estimació del primer model.
+
+```{r}
+model1=arima(lnserie,order=c(4,1,0),seasonal=list(order=c(0,1,2),period=12),fixed=c(NA,NA,0,NA,NA,NA))
+model1
+```
+
+### Model 2
+
+Procedirem ara d'igual manera amb el segon model.
+
+```{r}
+(model2=arima(d1d12lnserie,order=c(1,0,1),seasonal=list(order=c(1,0,1),period=12)))
+```
+
+Podem veure que, estadísticament, el terme independent val 0, i el seu test ràtio és menor que 2 en valor absolut, per tant, al nostre model no és important i no cal tenir-la en compte.
+
+```{r}
+(model2=arima(lnserie,order=c(1,1,1),seasonal=list(order=c(1,1,1),period=12)))
+```
+
+Veiem que l'AIC ha disminuit, de manera que aquest model explica millor la nostra sèrie i a més utilitza menys paràmetres. Ara provarem a augmentar els paràmetres d'AR i MA de les parts regular i estacional per veure si millora el model.
+
+```{r}
+model2=arima(lnserie,order=c(2,1,1),seasonal=list(order=c(1,1,1),period=12))
+model2$aic
+```
+
+Veiem que augmentant afegint un paràmetre a l'AR de la part regular l'AIC disminueix, per tant, el model millora. Per tant, provem si afegir un altre manté aquest efecte.
+
+```{r}
+model2=arima(lnserie,order=c(3,1,1),seasonal=list(order=c(1,1,1),period=12))
+model2$aic
+```
+
+Veiem que ara empitjora el model, per tant, provarem a afegir altres paràmetres.
+
+```{r}
+model2=arima(lnserie,order=c(2,1,2),seasonal=list(order=c(1,1,1),period=12))
+model2$aic
+```
+
+Veiem que afegint paràmetres al MA de la part regular el model no millora, per tant, passarem a provar a afegir paràmetres a la part estacional del model.
+
+```{r}
+model2=arima(lnserie,order=c(2,1,1),seasonal=list(order=c(2,1,1),period=12))
+model2$aic
+```
+
+Ara sí que disminueix l'AIC i, en conseqüència, el model millora, per tant, provarem a afegir un altre paràmetre a aquest AR de la part estacional del model.
+
+```{r}
+model2=arima(lnserie,order=c(2,1,1),seasonal=list(order=c(3,1,1),period=12))
+model2$aic
+```
+
+Veiem que no millora el model, per tant, passem a provar afegir un paràmetre al MA de la part estacional.
+
+```{r}
+model2=arima(lnserie,order=c(2,1,1),seasonal=list(order=c(2,1,2),period=12))
+model2$aic
+```
+
+Veiem que tampoc, millora, per tant, ens quedem amb el model al qual hem arribat afegint un paràmetre a l'AR de cadascuna de les parts del model.
+
+Ara, provarem a treure variables per evitar la sobreparametrització del model, seguint el principi de parismònia.
+
+```{r}
+model2=arima(lnserie,order=c(2,1,1),seasonal=list(order=c(2,1,0),period=12))
+model2$aic
+```
+
+```{r}
+model2=arima(lnserie,order=c(2,1,0),seasonal=list(order=c(2,1,1),period=12))
+model2$aic
+```
+
+```{r}
+model2=arima(lnserie,order=c(2,1,0),seasonal=list(order=c(2,1,0),period=12))
+model2$aic
+```
+
+Veiem que en cap cas disminueix l'AIC, per tant, no millora el model que ja teníem, que és amb el que ens quedarem.
+
+```{r}
+model2=arima(lnserie,order=c(2,1,1),seasonal=list(order=c(2,1,1),period=12))
+model2
+```
+
+***
+
+## Validació del model
+
+### Variància constant
+
+Per començar la validació dels nostres models, començarem fent els plots dels residus i de l'arrel quadrada dels valors absoluts dels residus. Amb això, podrem detectar outliers, comprovarem que els models compleixin el principi d'homocedasticitat i veurem si la seva variància és constant.
+
+```{r}
+resi1=resid(model1)
+resi2=resid(model2)
+par(mfrow=c(2,2))
+plot(resi1)
+abline(h=0)
+abline(h=c(-3*sd(resi1),3*sd(resi1)),lty=3,col=4)
+plot(resi2)
+abline(h=0)
+abline(h=c(-3*sd(resi2),3*sd(resi2)),lty=3,col=4)
+scatter.smooth(sqrt(abs(resi1)), lpars=list(col=2))
+scatter.smooth(sqrt(abs(resi2)), lpars=list(col=2))
+```
+
+Si mirem els dos primers gràfics dels residus, podem veure a simple vista que la variància sembla constant per a ambdós models, amb algunes zones on hi ha més dubte, com a prop del 2008, degut a l'efecte dels outliers.
+
+Si mirem ara els altres dos gràfics, veiem que la línea és gairebé recta, símbol de que la variància és constant. Sembla ser, a més a més, que pel model 1 la línia és lleugerament més recta.
+
+Per tant, en base al que hem vist a aquests gràfics, no podem rebutjar la hipòtesi de la variància constant.
+
+### Normalitat
+
+Per veure si els residus provenen d'una distribució normal, farem els plots de normalitat i els histogrames amb la corba normal superposada pels dos models de la sèrie.
+
+```{r}
+par(mfrow=c(2,2))
+qqnorm(resi1)
+qqline(resi1,col=2,lwd=2)
+qqnorm(resi2)
+qqline(resi2,col=2,lwd=2)
+hist(resi1,breaks=20, freq=FALSE)
+curve(dnorm(x, mean=mean(resi1), sd=sd(resi1)), col=2, add=T)
+hist(resi2,breaks=20, freq=FALSE)
+curve(dnorm(x, mean=mean(resi2), sd=sd(resi2)), col=2, add=T)
+```
+
+Dels dos plots de normalitat, veiem que els residus s'ajusten a la recta a excepció de valors inferiors a -1, on s'allunyen cada cop més, probablement com a conseqüència de la presència d'outliers.
+
+En els histogrames, podem apreciar que el comportament dels residus dels models és similar al d'una distribució normal però desplaçat lleugerament cap a la dreta, com a possible efecte dels outliers, un cop més.
+
+Així, en primera instància, rebutjaríem la hipòtesi de normalitat, però podem aplicar el test de Shapiro-Wilks als residus per acabar de confirmar aquests resultats.
+
+
+```{r}
+shapiro.test(resi1)
+```
+
+```{r}
+shapiro.test(resi2)
+```
+
+El test de Shapiro-Wilks presenta una gran sensibilitat davant la presència de valors atípics, però veient que els p-valors són molt més petits que 0.05 per a ambdós casos, i després d'haver vist els gràfics anteriors, podríem donar el test per bo i, d'aquesta manera, rebutjar la hipòtesi de normalitat de forma definitiva. La normalitat potser la podríem aconseguir tractant els outliers, que és el que farem més endavant.
+
+### Independència dels residus
+
+Farem ara els gràfics de l'ACF i el PACF dels residus dels dos models per comprovar la independència d'aquests.
+
+```{r}
+par(mfrow=c(1,2))
+acf(resi1,ylim=c(-1,1),lag.max=60,col=c(2,rep(1,12-1)),lwd=2)
+pacf(resi1,ylim=c(-1,1),lag.max=60,col=c(rep(1,12-1),2),lwd=2)
+```
+
+Pel primer model, podem veure alguns valors al llarg de la sèrie fora de l'interval de confiança de l'ACF i el PACF, fet que ens fa sospitar que els residus no són independents. Així, no podem identificar l'ACF i el PACF amb soroll blanc, deixant una part de la variabilitat de les dades del nostre model sense explicar.
+
+```{r}
+par(mfrow=c(1,2))
+acf(resi2,ylim=c(-1,1),lag.max=60,col=c(2,rep(1,12-1)),lwd=2)
+pacf(resi2,ylim=c(-1,1),lag.max=60,col=c(rep(1,12-1),2),lwd=2)
+```
+
+Per aquest segon model, podem veure alguns valors al llarg de la sèrie fora de l'interval de confiança de l'ACF i el PACF, fet que ens fa sospitar que els residus no són independents. Així, no podem identificar l'ACF i el PACF amb soroll blanc, deixant una part de la variabilitat de les dades del nostre model sense explicar.
+
+Anem a veure ara la representació dels p-valors pel test de Ljung-Box per tal de confirmar el que hem vist:
+
+```{r}
+tsdiag(model1,gof.lag=72)
+```
+
+Veiem pel primer model que, a partir dels retards que havíem vist a l'ACF i al PACF com a significatius, trobem valors del p-valor per sota del 0.05, rebutjant així la hipòtesi nul·la d'independència entre els residus.
+
+```{r}
+tsdiag(model2,gof.lag=72)
+```
+
+Veiem el mateix comportament per aquest segon model, on a partir dels retards que havíem vist a l'ACF i al PACF com a significatius, trobem valors del p-valor per sota del 0.05, rebutjant així la hipòtesi nul·la d'independència entre els residus.
+
+Aquesta dependència entre els residus pot ser conseqüència de la volatibilitat de les dades, que ens porta a pensar que hi ha una part d'aquestes que no s'expliquen als nostres models, que es basen en el passat.
+
+### Estacionarietat i invertabilitat
+
+Per expressar els models com a AR i MA infinits, necessitem saber les arrels dels polinomis característics de $\phi$ i $\theta$, respectivament. A més, analitzant-los, podrem dir si es tracta de models invertibles i estacionaris.
+
+Perquè es compleixi la estabilitat s'ha de conseguir que sigui causal, és a dir, que les arrels del polinomi caracterític AR (coeficients $\phi$) siguin més grans que 1; i invertible, es a dir, que les arrels del polinomi característic MA (coeficients $\theta$) siguin més grans que 1.
+
+```{r}
+Mod(polyroot(c(1,-model1$model$phi)))
+Mod(polyroot(c(1,model1$model$theta)))
+```
+
+Com podem veure, tant la part AR com la MA d'aquest primer model presenta totes les seves arrels més grans que 1, per tant, podem assegurar que és causal (arrels AR>1.2) i invertible (arrels MA>1), de manera que tindrem bones propietats als intervals de confiança i estabilitat al model.
+
+```{r}
+Mod(polyroot(c(1,-model2$model$phi)))
+Mod(polyroot(c(1,model2$model$theta)))
+```
+
+Com podem veure, tant la part AR com la MA d'aquest segon model presenta totes les seves arrels més grans que 1, però no gaire. Pel cas de la invertibilitat sí que podríem considerar que aquest model ho és (arrels MA>1), però en quant a l'estabilitat, les arrels de la part AR són bastant properes a 1(< 1.2). Com per modelitzar necessitem que el model sigui causal (ho imposa el paquet que utilitzem), de manera artificial sempre generarà un valor per sobre de 1, encara que sigui molt proper. El llindar per considerar si es causal o no és amb una arrel per sobre o per sota de 1.2, que en aquest cas no és així. Per tant, no considerem el model causal i no tindrem bones propietats als intervals de confiança ni estabilitat al model.
+
+Així, veiem que el nostre primer model presenta millors propietats que el segon, fet que té sentit, ja que aquest últim és un model ARMA, que es caracteritza per tenir pitjors propietats. En concret, com el primer model és invertible i causal, podem dir que és estable, en canvi, el segon model no ho és.
+
+
+### Mesures d'adequació a les dades
+
+Calculem ara les mesures d'adequació a les dades (AIC i BIC):
+
+```{r}
+AIC(model1)
+```
+
+```{r}
+AIC(model2)
+```
+
+```{r}
+BIC(model1)
+```
+
+```{r}
+BIC(model2)
+```
+
+Podem veure que tant el valor de l'AIC com el del BIC són millors pel primer model. En aquest cas, té sentit que el BIC sigui millor pel primer model, ja que utilitza menys paràmetres.
+
+### Capacitat de previsió
+
+Per tal de valorar la capacitat de previsió dels models, eliminarem el darrer any de la sèrie original per veure si la previsió s'ajusta als valors originals de la sèrie. Per tant, començarem eliminant les 12 darreres observacions de la sèrie logarítmica.
+
+```{r}
+ultim=c(2016,12)
+lnserie2=window(lnserie, end=ultim)
+```
+
+Ajustarem dos nous models a partir dels que teníem però ara per a la sèrie sense les 12 darreres observacions.
+
+```{r}
+(model3=arima(lnserie2,order=c(4,1,0),seasonal=list(order=c(0,1,2),period=12),fixed=c(NA,NA,0,NA,NA,NA)))
+```
+
+En el cas d'aquest model, veiem que tots els coeficients són significatius, ja que els seus test ràtio són majors que 2.
+
+```{r}
+(model4=arima(lnserie2,order=c(2,1,1),seasonal=list(order=c(2,1,1),period=12)))
+```
+
+Veiem que per a aquest model també tenim tots els coeficients significatius, de manera que treballarem amb aquests dos.
+
+Ara, procedirem com abans, i comprovarem que aquests models són estables:
+
+```{r}
+Mod(polyroot(c(1,-model3$model$phi)))
+Mod(polyroot(c(1,model3$model$theta)))
+```
+
+```{r}
+Mod(polyroot(c(1,-model4$model$phi)))
+Mod(polyroot(c(1,model4$model$theta)))
+```
+
+Veiem que, en els dos casos, els models mantenen les mateixes propietats que els de la sèrie original, és a dir, el primer és estable (invertible i causal) però el segon no ("invertible" però no causal).
+
+Així, tenim que els models 1 i 3 són estables i l'2 i el 4 no. Fet que té sentit perquè els models 2 i 4 són ARMA, que són un tipus de models que presenten més inestabilitat.
+
+Amb això comprovat, passarem a utilitzar els models per a la sèrie sense les 12 darreres observacions (models 3 i 4) per fer la predicció i el corresponent interval de confiança al 95% per a l'últim any.
+
+```{r}
+pr1<-predict(model3, n.ahead=12)
+ll1<-exp(pr1$pred-1.96*pr1$se)
+p1<-exp(pr1$pred)
+ul1<-exp(pr1$pred+1.96*pr1$se)
+```
+
+```{r}
+pr2<-predict(model4, n.ahead=12)
+ll2<-exp(pr2$pred-1.96*pr2$se)
+p2<-exp(pr2$pred)
+ul2<-exp(pr2$pred+1.96*pr2$se)
+```
+
+Representem els 5 darrers anys de la sèrie original juntament amb les prediccions i els intervals superposats:
+
+```{r}
+par(mfrow=c(1,2))
+ts.plot(serie,ll1,ul1,p1,lty=c(1,2,2,1),col=c(1,4,4,2),xlim=c(2013,2018),ylim=c(500,1300),type="o", main="Prediccions del model 3");
+abline(v=2013:2018,lty=3,col=4)
+ts.plot(serie,ll2,ul2,p2,lty=c(1,2,2,1),col=c(1,4,4,2),xlim=c(2013,2018),ylim=c(500,1300),type="o", main="Prediccions del model 4");
+abline(v=2013:2018,lty=3,col=4)
+```
+
+Veiem que les prediccions d'ambdós models són bastant similars però no acaben d'ajustar-se correctament a la sèrie, amb valors de la sèrie original fora de l'interval de confiança. Aquest fet té sentit per la volatibilitat de les dades, però potser tractant els atípics es pot observar una millora.
+
+Calculem ara les mesures de capacitat de previsió (RMSPE i MAPE) a partir de les prediccions puntuals obitngudes prèviament per tal de veure quin dels dos models és el millor per realitzar les previsions.
+
+```{r}
+obs=window(serie,start=2017)
+RMSPE1=sqrt(mean(((obs-p1)/obs)^2))
+MAPE1=mean(abs(obs-p1)/obs)
+RMSPE2=sqrt(mean(((obs-p2)/obs)^2))
+MAPE2=mean(abs(obs-p2)/obs)
+cat("RMSPE 1:",RMSPE1,"\n","MAPE 1:",MAPE1,"\n","RMSPE 2:",RMSPE2,"\n","MAPE 2:",MAPE2)
+```
+
+Podem veure que tots els valors d'aquestes mesures ens han sortit, com intuiem, bastant dolents, fet que indica que els errors són bastant significatius i les nostres prediccions no són gens exactes. En concret, considerem que un error superior al 10% indica un model amb poca capacitat de predicció. Tot i això, veiem que sembla que el model 3 ha fet una millor predicció que el model 4.
+
+Calcularem ara les mitjanes de les amplades dels intervals de confiança de predicció per als dos models.
+
+```{r}
+cat(mean(ul1-ll1),mean(ul2-ll2))
+```
+
+Podem veure que el model 3 té un interval de predicció més petit. A més, com el model 4 és inestable no ens podem fiar del tot d'aquest interval, ja que pot ser més gran del que presenta.
+
+### Tria del millor model
+
+Després d'haver treballat aquests dos models proposats hem decidit quedar-nos amb el primer. En primer lloc, hem vist que els dos complien la hipòtesi de variància, però cap dels dos la de normalitat ni la d'independència dels residus, probablement conseqüència de no haver tractat els outliers. A més, tant l'AIC com el BIC eren millors pel primer model. També hem vist que el segon model no era estable, a diferència del primer, que sí es podia considerar com a tal. Tenint en compte això i, tot i la similitud entre els dos models a l'hora de fer les prediccions, la millor capacitat de predicció del primer model, sembla evident triar aquest per a fer les prediccions.
+
+***
+
+## Previsions
+
+Per tant, anem a predir el consum aparent de ciment pel proper any usant el model 1.
+
+```{r}
+pr<-predict(model1, n.ahead=12)
+ll<-exp(pr$pred-1.96*pr$se)
+p<-exp(pr$pred)
+ul<-exp(pr$pred+1.96*pr$se)
+```
+
+```{r}
+ts.plot(serie,ll,ul,p,lty=c(1,2,2,1),col=c(1,4,4,2),xlim=c(2013,2019),ylim=c(600,1600),type="o", main="Prediccions pel proper any usant el model 1");
+abline(v=2013:2019,lty=3,col=4)
+```
+
+Observant els resultats, podem veure que l'interval de confiança es relativament ample en comparacions amb les prediccions anteriors, i en aquest cas contempla l'aparent creixement del consum de ciment al llarg dels següents anys.
+
+***
+
+## Tractament d'atípics
+
+### Detecció i interpretació
+
+```{r}
+source("atipics2.r")
+mod.atip=outdetec(model1,dif=c(1,12),crit=3.1,LS=T)
+atipics=mod.atip$atip[order(mod.atip$atip[,1]),]
+meses=c("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
+data.frame(atipics,Fecha=paste(meses[(atipics[,1]-1)%%12+1],start(lnserie)[1]+((atipics[,1]-1)%/%12)),PercVar=exp(atipics[,3])*100)
+```
+
+Primerament, podem veure que hi ha un AO (additive outlier) que només afecta a la observació corresponent al març de l'any de 1991. És un factor important en tenir un ABS_L_Ratio gran en comparació als altres outliers i un descens puntual del 21%. No em vist un factor important que afectés a aquesta dada, possiblement hem pensat que sigui que la setmana santa caigués al març del 24-31 i que per les vacances el consum s'aturés durant una setmana (quan acostuma a succeïr a l'abril).
+
+Segonament podem veure un altre AO, amb un increment puntual del 16%. Tampoc veiem una explicació molt clara, però un factor que hem pensat que ha pogut influir és la celebració dels XV Jocs Mediterranis a Almeria, que potser van requerir d'una demanda d'infraestructures més alta del normal i també que la setmana santa caigués al març. Cosa que fés que a l'abril es treballés més.
+
+Tercerament, veiem dos LS (levelshift), amb un descens del 18 % en ambdós casos d'una manera continuada fins al dia d'avui (important amb un ABS_L_Ratio gran en comparació als altres outliers). Això va ser resultat de la crisi del 2008 i de la explosió de la "bombolla inmobiliaria" a aquest any, ja que abans hi havia molta expectació amb la construcció i la tinença de propietats. Com els edificis es van devaluar de cop, segurament, es deixaria de contruïr com es feia abans (disminuïnt l'ús de ciment). L'efecte de la bombolla s'allarga al 2009 on veiem un nou LS del 16% de descens i també al Febrer del 2012 amb un altre LS del 14% de descens.
+
+Finalment podem veure que hi ha un AO (additive outlier) que només afecta a la observació corresponent al març de l'any de 2013, es un factor important en tenir un ABS_L_Ratio gran en comparació als altres outliers i un descens puntual del 20%. No em vist un factor important que afectés a aquesta dada, possiblement hem pensat que sigui que la setmana santa caigués al març del 24-31 i que per les vacances el consum s'aturés durant una setmana (quan acostuma a succeïr a l'abril). El mateix passa per 2016, on la setmana santa cau en 20-27 de març, i el descens es de 14%.
+
+### Linealització
+
+Passem ara a linealitzar la sèrie, és a dir, eliminar l'efecte dels outliers.
+
+```{r}
+lnserielin=lineal(lnserie,mod.atip$atip)
+serielin=exp(lnserielin)
+```
+
+Comparem el logaritme de la sèrie original amb el de la sèrie linealitzada.
+
+```{r}
+plot(lnserie-lnserielin)
+```
+
+Podem veure clarament l'efecte dels outliers, en aquest cas 4 AO (additive outlier) i 4 LS (level shift), que redueixen els valors del consum de ciment des de l'inici de la sèrie fins al final de la mateixa en un 80%.
+
+Per poder treballar amb la sèrie linealitzada, realitzem les mateixes transformacions que amb la sèrie original, començant per la diferenciació estacional.
+
+```{r}
+d12lnserielin <- diff(lnserielin, 12)
+plot(d12lnserielin)
+abline(h=0)
+```
+
+Veiem que ara l'efecte dels outliers, en especial el de 2008, s'ha reduït molt, i la sèrie s'apropa molt més a una mitjana constant. Continuem les transformacions amb una diferenciació regular.
+
+```{r}
+d1d12lnserielin <- diff(d12lnserielin)
+plot(d1d12lnserielin)
+abline(h=0)
+```
+
+Veiem que després d'aquesta transformació la mitjana sembla constant, per tant, ara compararem les variàncies dels diferents tractaments de la sèrie per veure quina és la millor opció, que serà aquella amb menor variància.
+
+```{r}
+var(serielin)
+var(lnserielin)
+var(d12lnserielin)
+var(d1d12lnserielin)
+```
+
+Veiem que el millor tractament per a la nostra sèrie sembla ser una diferenciació estacional i un regular, però com el guany en variància no arriba a ser del doble que només amb la diferenciació estacional, decidim estalviar-nos la diferenciació regular, de manera que prendríem la sèrie amb una única diferenciació estacional (d12lnserielin), aprofitant que ara presenta mitjana constant.
+
+Per poder identifcar els models, representem i analitzarem l'ACF i la PACF de la nostra sèrie transformada:
+
+```{r}
+par(mfrow=c(1,2))
+acf(d12lnserielin,ylim=c(-1,1), lag.max = 72, col=c(2,rep(1,11)), lwd = 2) 
+pacf(d12lnserielin,ylim=c(-1,1), lag.max = 72, col=c(rep(1,11), 2), lwd = 2)
+```
+
+Analitzant les gràfiques de l'ACF i el PACF, podríem plantejar el següent model AR:
+
+- $Model~lin = ARIMA(3,0,0)(4,1,0)_{12}$
+
+Com veiem 3 pics molt clars al PACF i l'ACF presenta un patró de decreixement, identifiquem un model AR a la part regular, de manera que q = 0 i p = 3. Per la part estacional, veiem 4 retards significatius bastant clars a l'ACF, per tant, Q = 0 i P = 4. D'altra banda, la sèrie presenta només una diferenciació estacional, per tant, d = 0 i D = 1.
+
+Per tal d'estimar el model, ara farem un test ràtio dels coeficients per comprovar que són estadísticament significatius.
+
+```{r}
+(modellin=arima(lnserielin,order=c(3,0,0),seasonal=list(order=c(4,1,0),period=12)))
+```
+D'entre algunes configuracions que hem provat, aquesta ha estat la que millor explicava el model amb el menor nombre de paràmetres possible, de manera que aquest serà el nostre model. Per tant, passem ara a validar-lo, començant amb els plots dels residus i de l'arrel quadrada dels valors absoluts dels residus. Amb això comprovarem que els models compleixin el principi d'homocedasticitat i veurem si la seva variància és constant.
+
+```{r}
+resilin=resid(modellin)
+par(mfrow=c(2,1))
+plot(resilin)
+abline(h=0)
+abline(h=c(-3*sd(resilin),3*sd(resilin)),lty=3,col=4)
+scatter.smooth(sqrt(abs(resilin)), lpars=list(col=2))
+```
+
+Veient els dos gràfics, podem considerar la variància constant, o almenys, no tenim prou evidències com per afirmar el contrari.
+
+Provarem ara que els residus provenen d'una distribució normal, fent el plot de normalitat i l'histograma amb la corba normal superposada.
+
+```{r}
+par(mfrow=c(1,2))
+qqnorm(resilin)
+qqline(resilin,col=2,lwd=2)
+hist(resilin,breaks=20, freq=FALSE)
+curve(dnorm(x, mean=mean(resilin), sd=sd(resilin)), col=2, add=T)
+```
+
+Del plot de normalitat, veiem que els residus s'ajusten en general a la recta, exceptuant algun punt, però no prou evident com per rebutjar l'hipòtesi de normalitat, i a l'histograma veiem un ajust prou adequat, reafirmant les nostres conclusions. De totes formes, podem aplicar el test de Shapiro-Wilks als residus per acabar de confirmar aquests resultats.
+
+
+```{r}
+shapiro.test(resilin)
+```
+
+Observem que el test de Shapiro-Wilk té un p-valor que, tot i ser més petit que 0.05, és molt proper. Per tant, tenim en compte l'alta sensibilitat del test, podríem considerar que la hipòtesi de normalitat no es rebutja realment.
+
+Farem ara els gràfics de l'ACF i el PACF dels residus dels dos models per comprovar la independència d'aquests.
+
+```{r}
+par(mfrow=c(1,2))
+acf(resilin,ylim=c(-1,1),lag.max=60,col=c(2,rep(1,12-1)),lwd=2)
+pacf(resilin,ylim=c(-1,1),lag.max=60,col=c(rep(1,12-1),2),lwd=2)
+```
+
+Tot i que aquestes gràfiques s'apropen a una representació de soroll blanc, hi ha algun valor al llarg de la sèrie fora de l'interval de confiança de l'ACF i el PACF, fet que ens fa dubtar de la hipòtesi d'independència dels residus. Anem a veure ara la representació dels p-valors pel test de Ljung-Box per tal de confirmar el que hem vist:
+
+```{r}
+tsdiag(modellin,gof.lag=72)
+```
+
+Veiem que, efectivament, trobem valors del p-valor per sota del 0.05, rebutjant així la hipòtesi nul·la d'independència entre els residus. Així, observem que tot i eliminar els outliers hi ha variabilitat dels residus que no es poden explicar mitjançant el temps (el nostre model).
+
+Calculem ara l'AIC del model, tenint en compte que aquesta no té en compte el "pes" d'afegir els paràmetres que representen els outliers, de manera que els afegim nosaltres manualment.
+
+
+```{r}
+AIC(modellin)+2*11
+```
+
+Si comparem aquest valor d'AIC amb el que teníem pel model de la sèrie original (model1), veiem que, efectivament, eliminar els outliers permet explicar millor el model.
+
+
+```{r}
+abs(AIC(modellin)+2*11)-abs(AIC(model1))
+```
+
+Anem a veure ara la capacitat de predicció d'aquest model utilitzant les observacions de l'últim any com a valors a predir.
+
+```{r}
+ultim=c(2016,12)
+lnserielin2=window(lnserielin, end=ultim)
+```
+
+Prenem el model amb la sèrie linealitzada sense les observacions dels últims 12 mesos.
+
+```{r}
+(modellin2=arima(lnserielin2,order=c(3,0,0),seasonal=list(order=c(4,1,0),period=12)))
+```
+
+Passem ara a predir el comportament de la sèrie pels últims 12 mesos utilitzant el model de la sèrie linealitzada.
+
+```{r}
+prlin<-predict(modellin2, n.ahead=12)
+wLS=sum(mod.atip$atip[mod.atip$atip[,2]=="LS",3])
+ll<-exp(prlin$pred+wLS-1.96*prlin$se)
+plin<-exp(prlin$pred+wLS)
+ul<-exp(prlin$pred+wLS+1.96*prlin$se)
+```
+
+```{r}
+ts.plot(serie,ll,ul,plin,lty=c(1,2,2,1),col=c(1,4,4,2),xlim=c(2013,2018),ylim=c(500,1300),type="o", main="Prediccions pel darrer any usant el model per a la sèrie linealitzada");
+abline(v=2013:2018,lty=3,col=4)
+```
+
+Veiem que, al igual que passava al primer model de la sèrie original, l'interval de predicció no s'ajusta a la sèrie original. Això és degut a que la variabilitat de les dades no ve explicada només pel temps i l'interval de confiança és bastant més ajustat que abans. Passarem a comparar els resultats d'aquestes prediccions amb els obtinguts amb el primer model.
+
+```{r}
+obs=window(serie,start=2017)
+RMSPElin=sqrt(mean(((obs-plin)/obs)^2))
+MAPElin=mean(abs(obs-plin)/obs)
+```
+
+```{r}
+RMSPElin - RMSPE1
+MAPElin - MAPE1
+```
+
+Observem que hem obtingut més error amb aquestes prediccions utilitzant el model de la sèrie linealitzada que amb el de la sèrie original. Això és degut a que la variància de la sèrie linealitzada transformada era menor que la de l'original i, en conseqüència, els intervals de predicció són més ajustats, de manera que si la sèrie es comporta d'una manera poc esperada degut a la volabilitat de les dades, l'error serà més gran a aquest útlim model que hem plantejat.
+
+Per acabar, farem la previsió per als propers 12 mesos de la sèrie original utilitzant el model per a la sèrie linealitzada.
+
+```{r}
+prlin<-predict(modellin, n.ahead=12)
+ll<-exp(prlin$pred+wLS-1.96*prlin$se)
+plin<-exp(prlin$pred+wLS)
+ul<-exp(prlin$pred+wLS+1.96*prlin$se)
+```
+
+```{r}
+ts.plot(serie,ll,ul,plin,lty=c(1,2,2,1),col=c(1,4,4,2),xlim=c(2013,2019),ylim=c(600,1600),type="o", main="Prediccions pel proper any usant el model per a la sèrie linealitzada");
+abline(v=2013:2019,lty=3,col=4)
+```
+
+Observem que ara l'interval de confiança s'ajusta més a la predicció i sembla prendre més en compte el comportament creixent dels darrers anys. Tot i així, després de veure que la volabilitat de les dades pot provocar un comportament poc esperat de la sèrie, no podem assegurar que realment aquesta predicció s'ajusti a la realitat.
